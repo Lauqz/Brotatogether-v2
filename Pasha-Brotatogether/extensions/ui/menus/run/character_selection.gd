@@ -141,6 +141,9 @@ func _ready():
 			else:
 				inventory_by_string_key[character_item_to_string(character_data.item)] = character_data
 
+		for panel in _get_panels():
+			panel._small(true)
+
 
 func _on_pressed_left_menu_arrow() -> void:
 	visible_panel_index = (visible_panel_index - 1 + panels_array.size()) % panels_array.size()
