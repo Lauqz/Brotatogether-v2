@@ -32,6 +32,11 @@ var client_structures = {}
 # Used to dedupe spawns
 var client_pending_ids = {}
 
+var _spawning_ghosts: bool = false
+const GHOST_DELAY_MSEC: int = 100
+var _ghost_queue: Array = []
+var _ghost_players: Dictionary = {}
+
 var server_player_projectile_ids = {}
 var server_enemy_projectile_ids = {}
 
@@ -121,6 +126,13 @@ func _physics_process(delta : float):
 		else:
 			_send_client_position()
 
+	if brotatogether_options.is_solo_test:
+		var now = Time.get_ticks_msec()
+		while _ghost_queue.size() > 0 and now - _ghost_queue[0]["time"] >= GHOST_DELAY_MSEC:
+			_spawning_ghosts = true
+			_ghost_state_update(_ghost_queue.pop_front()["state"])
+			_spawning_ghosts = false
+
 
 func _process(_delta):
 	if in_multiplayer_game:
@@ -207,6 +219,9 @@ func _send_game_state() -> void:
 					size_by_key[key] = compressed_size
 	
 	steam_connection.send_game_state(state_dict)
+
+	if brotatogether_options.is_solo_test:
+		_ghost_queue.push_back({"time": Time.get_ticks_msec(), "state": state_dict})
 
 
 func _state_update(state_dict : Dictionary) -> void:	
@@ -478,6 +493,9 @@ func _update_enemy(enemy_dict : Dictionary) -> void:
 
 
 func spawn_enemy(enemy_dict) -> void:
+	if not is_instance_valid(_entities_container):
+		return
+
 	var filename = enemy_dict["FILENAME"]
 	var resource_path = enemy_dict["RESOURCE_PATH"]
 	var enemy_id = enemy_dict["NETWORK_ID"]
@@ -506,7 +524,112 @@ func spawn_enemy(enemy_dict) -> void:
 	enemy.add_child(client_attack_behavior, true)
 	enemy._current_attack_behavior = client_attack_behavior
 	
+	if brotatogether_options.is_solo_test:
+		enemy.collision_layer = 0
+		enemy.collision_mask = 0
+		var hurtbox = enemy.get_node_or_null("Hurtbox")
+		if hurtbox:
+			hurtbox.monitoring = false
+			hurtbox.monitorable = false
+			for shape in hurtbox.get_children():
+				if shape is CollisionShape2D or shape is CollisionPolygon2D:
+					shape.disabled = true
+
 	_entities_container.add_child(enemy)
+
+
+func _ghost_state_update(state_dict: Dictionary) -> void:
+	_update_ghost_players(state_dict["PLAYERS"])
+	for enemy_dict in state_dict["ENEMIES"]:
+		_update_enemy(enemy_dict)
+	for boss_dict in state_dict["BOSSES"]:
+		_update_enemy(boss_dict)
+	for enemy_id in state_dict["BATCHED_ENEMY_DEATHS"]:
+		if client_enemies.has(enemy_id):
+			if not client_enemies[enemy_id].dead:
+				client_enemies[enemy_id].die()
+			client_enemies.erase(enemy_id)
+	_update_enemy_projectiles(state_dict["ENEMY_PROJECTILES"])
+	_update_player_projectiles(state_dict["PLAYER_PROJECTILES"])
+	_apply_ghost_modulate()
+
+
+func _apply_ghost_modulate() -> void:
+	var ghost_color = Color(0.5, 0.8, 1.0, 0.35)
+	for entity in client_enemies.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+			if entity is CollisionObject2D:
+				entity.collision_layer = 0
+				entity.collision_mask = 0
+	for entity in client_enemy_projectiles.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+			if entity is CollisionObject2D:
+				entity.collision_layer = 0
+				entity.collision_mask = 0
+	for entity in client_player_projectiles.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+			if entity is CollisionObject2D:
+				entity.collision_layer = 0
+				entity.collision_mask = 0
+
+
+func _update_ghost_players(players_array: Array) -> void:
+	for player_index in players_array.size():
+		var player_dict = players_array[player_index]
+		var player = _players[player_index]
+
+		if not is_instance_valid(player) or player.dead:
+			if _ghost_players.has(player_index):
+				if is_instance_valid(_ghost_players[player_index]):
+					_ghost_players[player_index].queue_free()
+				_ghost_players.erase(player_index)
+			continue
+
+		var ghost
+		if _ghost_players.has(player_index) and is_instance_valid(_ghost_players[player_index]):
+			ghost = _ghost_players[player_index]
+		else:
+			ghost = Node2D.new()
+			var ghost_sprite = _make_ghost_player_sprite(player)
+			ghost_sprite.name = "GhostSprite"
+			ghost.add_child(ghost_sprite)
+			_entities_container.add_child(ghost)
+			_ghost_players[player_index] = ghost
+
+		ghost.position = Vector2(
+			player_dict[EntityState.ENTITY_STATE_X_POS],
+			player_dict[EntityState.ENTITY_STATE_Y_POS]
+		)
+		var ghost_sprite = ghost.get_node_or_null("GhostSprite")
+		if ghost_sprite:
+			ghost_sprite.scale.x = player_dict[EntityState.ENTITY_STATE_SPRITE_SCALE]
+		ghost.modulate = Color(0.5, 0.8, 1.0, 0.35)
+
+
+func _make_ghost_player_sprite(player) -> Node2D:
+	var src = player.sprite
+	if src is AnimatedSprite:
+		var frames = src.frames
+		if frames and frames.has_animation(src.animation):
+			var texture = frames.get_frame(src.animation, src.frame)
+			if texture:
+				var s = Sprite.new()
+				s.texture = texture
+				return s
+	elif src is Sprite:
+		var s = Sprite.new()
+		s.texture = src.texture
+		return s
+	var fallback = Polygon2D.new()
+	var pts = PoolVector2Array()
+	for i in 12:
+		var a = i * TAU / 12.0
+		pts.append(Vector2(cos(a) * 16.0, sin(a) * 16.0))
+	fallback.set_polygon(pts)
+	return fallback
 
 
 func multiplayer_ready():
@@ -666,6 +789,9 @@ func _update_player_projectiles(player_projectiles_array : Array) -> void:
 
 
 func _spawn_player_projectile(player_projectile_dict : Dictionary) -> void:
+	if not is_instance_valid(_player_projectiles):
+		return
+
 	var network_id = player_projectile_dict["NETWORK_ID"]
 	var projectile = load(player_projectile_dict["FILENAME"]).instance()
 	
@@ -686,6 +812,7 @@ func _spawn_player_projectile(player_projectile_dict : Dictionary) -> void:
 
 	_player_projectiles.add_child(projectile)
 
+	projectile._hitbox.active = false
 	projectile.set_physics_process(false)
 	projectile.show()
 
@@ -923,16 +1050,21 @@ func _update_enemy_projectiles(enemy_projectiles_array : Array) -> void:
 
 
 func _spawn_enemy_projectile(enemy_projectile_dict : Dictionary) -> void:
+	if not is_instance_valid(_enemy_projectiles):
+		return
+
 	var network_id = enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_NETWORK_ID]
 	var enemy_projectile = load(enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_FILENAME]).instance()
 	client_enemy_projectiles[network_id] = enemy_projectile
-	
+
 	enemy_projectile.position.x = enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_X_POS]
 	enemy_projectile.position.y = enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_Y_POS]
-	
+
 	enemy_projectile.rotation = enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_ROTATION]
-	
+
 	_enemy_projectiles.add_child(enemy_projectile)
+
+	enemy_projectile._hitbox.active = false
 	_enemy_projectiles.set_physics_process(false)
 	_enemy_projectiles.show()
 
@@ -1210,9 +1342,9 @@ func spawn_explosion(explosion_dict : Dictionary) -> void:
 	instance.set_deferred("global_position", Vector2(explosion_dict["X_POS"], explosion_dict["Y_POS"]))
 
 
-func add_node_to_pool(node: Node, id: int) -> void:
-	# TODO correct deal with the node and IDs to propagate optimizations
-	if _pool.has(id):
+func add_node_to_pool(node: Node, id) -> void:
+	# id may be null for client-spawned projectiles that have no pool_id meta
+	if id != null and _pool.has(id):
 		.add_node_to_pool(node, id)
-	else:
+	elif node.get_parent() != null:
 		node.get_parent().remove_child(node)
