@@ -25,6 +25,7 @@ func _ready():
 	remove_game_controller()
 	
 	$"/root/BrotogetherOptions".joining_multiplayer_lobby = false
+	$"/root/BrotogetherOptions".is_solo_test = false
 	
 
 func init() -> void:

@@ -103,14 +103,24 @@ func _player_selected_weapon(player_index : int) -> void:
 func _set_selected_element(p_player_index:int) -> void:
 	if _has_player_selected[p_player_index]:
 		return
-	
+
 	# This happens during the base _ready for characters with no weapon slots.
 	if not steam_connection:
 		_has_player_selected[p_player_index] = true
 		return
-	
+
 	._set_selected_element(p_player_index)
-	
+
+	if brotatogether_options.is_solo_test:
+		var all_selected = true
+		for i in RunData.get_player_count():
+			if not _has_player_selected[i]:
+				all_selected = false
+				break
+		if all_selected:
+			CoopService.listening_for_inputs = false
+			_selections_completed_timer.start()
+
 	if steam_connection.get_lobby_index_for_player(steam_connection.steam_id) == p_player_index:
 		steam_connection.weapon_selected()
 

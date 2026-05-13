@@ -265,9 +265,19 @@ func _lobby_characters_updated(player_characters : Array, has_player_selected : 
 func _set_selected_element(player_index:int) -> void:
 	if _has_player_selected[player_index]:
 		return
-	
+
 	._set_selected_element(player_index)
-	
+
+	if brotatogether_options.is_solo_test:
+		var all_selected = true
+		for i in RunData.get_player_count():
+			if not _has_player_selected[i]:
+				all_selected = false
+				break
+		if all_selected:
+			CoopService.listening_for_inputs = false
+			_selections_completed_timer.start()
+
 	if steam_connection.get_lobby_index_for_player(steam_connection.steam_id) == player_index:
 		steam_connection.character_selected()
 

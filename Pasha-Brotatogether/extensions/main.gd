@@ -876,23 +876,24 @@ func _spawn_structure(structure_dict : Dictionary) -> void:
 func _host_enemy_projectiles_array() -> Array:
 	var enemy_projectiles_array = []
 	
-	for enemy_projectile in _enemy_projectiles.get_children():
-		if enemy_projectile is Projectile and enemy_projectile._hitbox.active:
-			var projectile_dict = {}
-			var network_id
-			if server_enemy_projectile_ids.has(enemy_projectile):
-				network_id = server_enemy_projectile_ids[enemy_projectile]
-			else:
-				network_id = brotatogether_options.current_network_id
-				brotatogether_options.current_network_id = brotatogether_options.current_network_id + 1
-				server_enemy_projectile_ids[enemy_projectile] = network_id
-			
-			projectile_dict[ProjectileState.PROJECTILE_STATE_NETWORK_ID] = network_id
-			projectile_dict[ProjectileState.PROJECTILE_STATE_X_POS] = enemy_projectile.global_position.x
-			projectile_dict[ProjectileState.PROJECTILE_STATE_Y_POS] = enemy_projectile.global_position.y
-			projectile_dict[ProjectileState.PROJECTILE_STATE_ROTATION] = enemy_projectile.rotation
-			projectile_dict[ProjectileState.PROJECTILE_STATE_FILENAME] = enemy_projectile.filename
-			enemy_projectiles_array.push_back(projectile_dict)
+	if is_instance_valid(_enemy_projectiles):
+		for enemy_projectile in _enemy_projectiles.get_children():
+			if enemy_projectile is Projectile and enemy_projectile._hitbox.active:
+				var projectile_dict = {}
+				var network_id
+				if server_enemy_projectile_ids.has(enemy_projectile):
+					network_id = server_enemy_projectile_ids[enemy_projectile]
+				else:
+					network_id = brotatogether_options.current_network_id
+					brotatogether_options.current_network_id = brotatogether_options.current_network_id + 1
+					server_enemy_projectile_ids[enemy_projectile] = network_id
+				
+				projectile_dict[ProjectileState.PROJECTILE_STATE_NETWORK_ID] = network_id
+				projectile_dict[ProjectileState.PROJECTILE_STATE_X_POS] = enemy_projectile.global_position.x
+				projectile_dict[ProjectileState.PROJECTILE_STATE_Y_POS] = enemy_projectile.global_position.y
+				projectile_dict[ProjectileState.PROJECTILE_STATE_ROTATION] = enemy_projectile.rotation
+				projectile_dict[ProjectileState.PROJECTILE_STATE_FILENAME] = enemy_projectile.filename
+				enemy_projectiles_array.push_back(projectile_dict)
 	return enemy_projectiles_array
 
 

@@ -42,6 +42,11 @@ func _ready():
 	create_lobby_button.grab_focus()
 	CoopService.clear_coop_players()
 
+	var solo_test_btn = Button.new()
+	solo_test_btn.text = "Solo Test"
+	create_lobby_button.get_parent().add_child(solo_test_btn)
+	solo_test_btn.connect("pressed", self, "_on_solo_test_button_pressed")
+
 
 func _input(event:InputEvent)->void :
 	manage_back(event)
@@ -69,6 +74,16 @@ func _received_global_chat(user, message) -> void:
 	new_message_node.message = message
 	new_message_node.username = user
 	chat_messages.add_child(new_message_node)
+
+
+func _on_solo_test_button_pressed() -> void:
+	steam_connection.game_lobby_id = 1
+	steam_connection.game_lobby_owner_id = steam_connection.steam_id
+	steam_connection.lobby_members = [steam_connection.steam_id]
+	steam_connection.lobby_member_names = [Steam.getFriendPersonaName(steam_connection.steam_id)]
+	brotatogether_options.is_solo_test = true
+	brotatogether_options.joining_multiplayer_lobby = true
+	var _error = get_tree().change_scene(MenuData.character_selection_scene)
 
 
 func _on_create_lobby_button_pressed():
