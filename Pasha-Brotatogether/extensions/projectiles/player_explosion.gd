@@ -1,10 +1,11 @@
 extends "res://projectiles/player_explosion.gd"
 
+var is_ghost_explosion = false
 
 func start_explosion() -> void:
 	var steam_connection = $"/root/SteamConnection"
 	var brotatogether_options = $"/root/BrotogetherOptions"
-	if brotatogether_options.in_multiplayer_game:
+	if brotatogether_options.in_multiplayer_game and not is_ghost_explosion:
 		if steam_connection.is_host():
 			var explosion_dict = {
 				"X_POS" : global_position.x,

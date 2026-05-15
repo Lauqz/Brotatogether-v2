@@ -2,6 +2,7 @@ extends "res://main.gd"
 
 var ClientMovementBehavior = load("res://mods-unpacked/Pasha-Brotatogether/client/client_movement_behavior.gd")
 var ClientAttackBehavior = load("res://mods-unpacked/Pasha-Brotatogether/client/client_attack_behavior.gd")
+var ClientTargetBehavior = load("res://mods-unpacked/Pasha-Brotatogether/client/client_target_behavior.gd")
 var explosion_scene = load("res://projectiles/explosion.tscn")
 var DataNode = load("res://mods-unpacked/Pasha-Brotatogether/data_node.gd")
 
@@ -28,6 +29,7 @@ var client_items = {}
 var client_consumables = {}
 var client_neutrals = {}
 var client_structures = {}
+var client_pets = {}
 
 # Used to dedupe spawns
 var client_pending_ids = {}
@@ -36,6 +38,7 @@ var _spawning_ghosts: bool = false
 const GHOST_DELAY_MSEC: int = 100
 var _ghost_queue: Array = []
 var _ghost_players: Dictionary = {}
+var _ghost_births: Dictionary = {}
 
 var server_player_projectile_ids = {}
 var server_enemy_projectile_ids = {}
@@ -204,6 +207,7 @@ func _send_game_state() -> void:
 	state_dict["CONSUMABLES"] = _host_consumables_array()
 	state_dict["NEUTRALS"] = _host_neutrals_array()
 	state_dict["STRUCTURES"] = _host_structures_array()
+	state_dict["PETS"] = _host_pets_array()
 	state_dict["ENEMY_PROJECTILES"] = _host_enemy_projectiles_array()
 	state_dict["UPGRADE_MENU_STATUS"] = _host_menu_status()
 	
@@ -311,7 +315,11 @@ func _state_update(state_dict : Dictionary) -> void:
 	before = Time.get_ticks_usec()
 	_update_structures(state_dict["STRUCTURES"])
 	var structures_update_time = Time.get_ticks_usec() - before
-	
+
+	before = Time.get_ticks_usec()
+	_update_pets(state_dict["PETS"])
+	var pets_update_time = Time.get_ticks_usec() - before
+
 	before = Time.get_ticks_usec()
 	_update_enemy_projectiles(state_dict["ENEMY_PROJECTILES"])
 	var enemy_projectiles_update_time = Time.get_ticks_usec() - before
@@ -362,6 +370,7 @@ func _state_update(state_dict : Dictionary) -> void:
 				" --- Consumables: ", consumables_update_time,
 				" --- Neutrals: ", neutrals_update_time,
 				" --- Structures: ", structures_update_time,
+				" --- Pets: ", pets_update_time,
 				" --- Enemy Projectiles: ", enemy_projectiles_update_time,
 				" --- Enemy Hit Effects: ", enemy_hit_effects_update_time,
 				" --- Enemy Hit Particles: ", enemy_hit_particles_update_time,
@@ -517,12 +526,19 @@ func spawn_enemy(enemy_dict) -> void:
 	enemy.add_child(client_movement_behavior, true)
 	enemy._current_movement_behavior = client_movement_behavior
 	
-	var attack_behavior = enemy.get_node("AttackBehavior")
-	enemy.remove_child(attack_behavior)
-	var client_attack_behavior = ClientAttackBehavior.new()
-	client_attack_behavior.set_name("AttackBehavior")
-	enemy.add_child(client_attack_behavior, true)
-	enemy._current_attack_behavior = client_attack_behavior
+	var attack_behaviors_to_replace = []
+	for child in enemy.get_children():
+		if child is AttackBehavior:
+			attack_behaviors_to_replace.push_back(child)
+	for ab in attack_behaviors_to_replace:
+		var ab_name = ab.name
+		enemy.remove_child(ab)
+		var client_ab = ClientAttackBehavior.new()
+		client_ab.set_name(ab_name)
+		enemy.add_child(client_ab, true)
+	var replaced_ab = enemy.get_node_or_null("AttackBehavior")
+	if replaced_ab:
+		enemy._current_attack_behavior = replaced_ab
 	
 	if brotatogether_options.is_solo_test:
 		enemy.collision_layer = 0
@@ -551,6 +567,14 @@ func _ghost_state_update(state_dict: Dictionary) -> void:
 			client_enemies.erase(enemy_id)
 	_update_enemy_projectiles(state_dict["ENEMY_PROJECTILES"])
 	_update_player_projectiles(state_dict["PLAYER_PROJECTILES"])
+	call_deferred("_update_ghost_births", state_dict["BIRTHS"])
+	_update_items(state_dict["ITEMS"])
+	_update_consumables(state_dict["CONSUMABLES"])
+	_update_neutrals(state_dict["NEUTRALS"])
+	_update_structures(state_dict["STRUCTURES"])
+	_update_pets(state_dict["PETS"])
+	for explosion in state_dict["BATCHED_EXPLOSIONS"]:
+		call_deferred("spawn_explosion", explosion)
 	_apply_ghost_modulate()
 
 
@@ -574,6 +598,26 @@ func _apply_ghost_modulate() -> void:
 			if entity is CollisionObject2D:
 				entity.collision_layer = 0
 				entity.collision_mask = 0
+	for entity in client_items.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+			entity.set_physics_process(false)
+	for entity in client_consumables.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+			entity.set_physics_process(false)
+	for entity in client_neutrals.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+	for entity in client_structures.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+	for entity in _ghost_births.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
+	for entity in client_pets.values():
+		if is_instance_valid(entity):
+			entity.modulate = ghost_color
 
 
 func _update_ghost_players(players_array: Array) -> void:
@@ -630,6 +674,30 @@ func _make_ghost_player_sprite(player) -> Node2D:
 		pts.append(Vector2(cos(a) * 16.0, sin(a) * 16.0))
 	fallback.set_polygon(pts)
 	return fallback
+
+
+func _update_ghost_births(births_array: Array) -> void:
+	var current_births = {}
+	for birth_dict in births_array:
+		var network_id = birth_dict["NETWORK_ID"]
+		current_births[network_id] = true
+		if not _ghost_births.has(network_id):
+			var birth = ENTITY_BIRTH_SCENE.instance()
+			birth.network_id = network_id
+			_entities_container.add_child(birth)
+			_ghost_births[network_id] = birth
+			birth.start(birth_dict["TYPE"], ENTITY_BIRTH_SCENE,
+				Vector2(birth_dict["X_POS"], birth_dict["Y_POS"]))
+			birth._collision_shape.set_deferred("disabled", true)
+
+	var to_remove = []
+	for network_id in _ghost_births:
+		if not current_births.has(network_id):
+			to_remove.push_back(network_id)
+	for network_id in to_remove:
+		if is_instance_valid(_ghost_births[network_id]):
+			_ghost_births[network_id].queue_free()
+		_ghost_births.erase(network_id)
 
 
 func multiplayer_ready():
@@ -820,6 +888,8 @@ func _spawn_player_projectile(player_projectile_dict : Dictionary) -> void:
 func _host_items_array() -> Array:
 	var items_array : Array = []
 	for item in _active_golds:
+		if not is_instance_valid(item):
+			continue
 		var item_dict = {}
 		item_dict["NETWORK_ID"] = item.network_id
 		item_dict["X_POS"] = item.global_position.x
@@ -856,7 +926,8 @@ func _spawn_item(item_dict : Dictionary) -> void:
 	gold.scale.x = item_dict["X_SCALE"]
 	gold.scale.y = item_dict["Y_SCALE"]
 	_materials_container.add_child(gold)
-	_active_golds.push_back(gold)
+	if not brotatogether_options.is_solo_test:
+		_active_golds.push_back(gold)
 	client_items[network_id] = gold
 	gold.call_deferred("show")
 
@@ -865,7 +936,7 @@ func _host_consumables_array() -> Array:
 	var consumables_array = []
 	
 	for consumable in _consumables_container.get_children():
-		if consumable.visible:
+		if consumable.visible and consumable.consumable_data != null:
 			var consumable_dict = {}
 			consumable_dict["NETWORK_ID"] = consumable.network_id
 			consumable_dict["X_POS"] = consumable.global_position.x
@@ -929,9 +1000,7 @@ func _update_neutrals(neutrals_array : Array) -> void:
 		var network_id = neutral_dict["NETWORK_ID"]
 		current_neutrals[network_id] = true
 		if client_neutrals.has(network_id):
-			var neutral = client_neutrals[network_id]
-			neutral.global_position.x = neutral_dict["X_POS"]
-			neutral.global_position.y = neutral_dict["Y_POS"]
+			pass
 		else:
 			call_deferred("_spawn_neutral", neutral_dict)
 	
@@ -945,10 +1014,25 @@ func _spawn_neutral(neutral_dict : Dictionary) -> void:
 	var neutral = TREE_SCENE.instance()
 	neutral.global_position.x = neutral_dict["X_POS"]
 	neutral.global_position.y = neutral_dict["Y_POS"]
-	
+
+	neutral.collision_layer = 0
+	neutral.collision_mask = 0
+	neutral.mode = RigidBody2D.MODE_STATIC
+	var hurtbox = neutral.get_node_or_null("Hurtbox")
+	if hurtbox:
+		hurtbox.collision_layer = 0
+		hurtbox.collision_mask = 0
+
 	client_neutrals[neutral_dict["NETWORK_ID"]] = neutral
-	
+
 	Utils.get_scene_node().add_child(neutral)
+
+	if hurtbox:
+		hurtbox.monitoring = false
+		hurtbox.monitorable = false
+		for shape in hurtbox.get_children():
+			if shape is CollisionShape2D or shape is CollisionPolygon2D:
+				shape.set_deferred("disabled", true)
 
 
 func _host_structures_array() -> Array:
@@ -973,10 +1057,7 @@ func _update_structures(structures_array : Array) -> void:
 		var network_id = structure_dict["NETWORK_ID"]
 		current_structures[network_id] = true
 		if client_structures.has(network_id):
-			var structure = client_structures[network_id]
-			
-			structure.position.x = structure_dict["X_POS"]
-			structure.position.y = structure_dict["Y_POS"]
+			pass
 		else:
 			call_deferred("_spawn_structure", structure_dict)
 	
@@ -996,8 +1077,101 @@ func _spawn_structure(structure_dict : Dictionary) -> void:
 	structure.stats = CLIENT_TURRET_STATS
 	
 	client_structures[structure_dict["NETWORK_ID"]] = structure
-	
+
 	Utils.get_scene_node().add_child(structure)
+	structure.set_physics_process(false)
+	structure.set_process(false)
+
+
+func _host_pets_array() -> Array:
+	var pets_array = []
+	for pet in _entity_spawner.pets:
+		if not is_instance_valid(pet) or pet.dead:
+			continue
+		var pet_dict = {}
+		pet_dict["NETWORK_ID"] = pet.network_id
+		pet_dict["FILENAME"] = pet.filename
+		pet_dict["X_POS"] = pet.position.x
+		pet_dict["Y_POS"] = pet.position.y
+		pet_dict["MOVE_X"] = pet._current_movement.x
+		pet_dict["MOVE_Y"] = pet._current_movement.y
+		pet_dict["MODULATE_R"] = pet.sprite.self_modulate.r8
+		pet_dict["MODULATE_G"] = pet.sprite.self_modulate.g8
+		pet_dict["MODULATE_B"] = pet.sprite.self_modulate.b8
+		pet_dict["MODULATE_A"] = pet.sprite.self_modulate.a8
+		pets_array.push_back(pet_dict)
+	return pets_array
+
+
+func _update_pets(pets_array: Array) -> void:
+	var current_pets = {}
+	for pet_dict in pets_array:
+		var network_id = pet_dict["NETWORK_ID"]
+		current_pets[network_id] = true
+		if client_pets.has(network_id):
+			var pet = client_pets[network_id]
+			if is_instance_valid(pet):
+				pet.call_deferred("update_client_enemy", pet_dict)
+		else:
+			if not client_pending_ids.has(network_id):
+				client_pending_ids[network_id] = true
+				call_deferred("_spawn_pet", pet_dict)
+	var to_remove = []
+	for network_id in client_pets:
+		if not current_pets.has(network_id):
+			to_remove.push_back(network_id)
+	for network_id in to_remove:
+		if is_instance_valid(client_pets[network_id]):
+			client_pets[network_id].queue_free()
+		client_pets.erase(network_id)
+
+
+func _spawn_pet(pet_dict: Dictionary) -> void:
+	if not is_instance_valid(_entities_container):
+		return
+
+	var network_id = pet_dict["NETWORK_ID"]
+	var pet = load(pet_dict["FILENAME"]).instance()
+	pet.position = Vector2(pet_dict["X_POS"], pet_dict["Y_POS"])
+
+	var movement_behavior = pet.get_node_or_null("MovementBehavior")
+	if movement_behavior:
+		pet.remove_child(movement_behavior)
+		var client_mb = ClientMovementBehavior.new()
+		client_mb.set_name("MovementBehavior")
+		pet.add_child(client_mb, true)
+		pet._current_movement_behavior = client_mb
+
+	var target_behavior = pet.get_node_or_null("TargetBehavior")
+	if target_behavior:
+		pet.remove_child(target_behavior)
+		var client_tb = ClientTargetBehavior.new()
+		client_tb.set_name("TargetBehavior")
+		pet.add_child(client_tb, true)
+		pet._current_target_behavior = client_tb
+
+	var attack_behavior = pet.get_node_or_null("AttackBehavior")
+	if attack_behavior:
+		pet.remove_child(attack_behavior)
+		var client_ab = ClientAttackBehavior.new()
+		client_ab.set_name("AttackBehavior")
+		pet.add_child(client_ab, true)
+		pet._current_attack_behavior = client_ab
+
+	for child in pet.get_children():
+		if child is CollisionObject2D:
+			child.collision_layer = 0
+			child.collision_mask = 0
+
+	client_pets[network_id] = pet
+	client_pending_ids.erase(network_id)
+	_entities_container.add_child(pet)
+	pet.set_physics_process(false)
+	pet.set_process(false)
+	for child in pet.get_children():
+		if child is Area2D:
+			child.monitoring = false
+			child.monitorable = false
 
 
 func _host_enemy_projectiles_array() -> Array:
@@ -1334,12 +1508,13 @@ func _on_unit_took_damage(unit: Unit, value: int, _knockback_direction: Vector2,
 
 func spawn_explosion(explosion_dict : Dictionary) -> void:
 	var instance = explosion_scene.instance()
+	instance.is_ghost_explosion = true
 	call_deferred("add_explosion", instance)
-	
+
 	var explosion_scale = Vector2(explosion_dict["SCALE"],explosion_dict["SCALE"])
-	instance.call_deferred("start_explosion")
-	instance.set_deferred("scale", explosion_scale)
 	instance.set_deferred("global_position", Vector2(explosion_dict["X_POS"], explosion_dict["Y_POS"]))
+	instance.set_deferred("scale", explosion_scale)
+	instance.call_deferred("start_explosion")
 
 
 func add_node_to_pool(node: Node, id) -> void:

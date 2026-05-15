@@ -7,3 +7,4 @@ var charge_speed
 var long_cooldown = 1.0
 var cooldown = 1.0
 var _current_cd = 1.0
+var number_projectiles
