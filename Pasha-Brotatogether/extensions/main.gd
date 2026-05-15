@@ -1012,8 +1012,6 @@ func _update_neutrals(neutrals_array : Array) -> void:
 
 func _spawn_neutral(neutral_dict : Dictionary) -> void:
 	var neutral = TREE_SCENE.instance()
-	neutral.global_position.x = neutral_dict["X_POS"]
-	neutral.global_position.y = neutral_dict["Y_POS"]
 
 	neutral.collision_layer = 0
 	neutral.collision_mask = 0
@@ -1026,6 +1024,7 @@ func _spawn_neutral(neutral_dict : Dictionary) -> void:
 	client_neutrals[neutral_dict["NETWORK_ID"]] = neutral
 
 	Utils.get_scene_node().add_child(neutral)
+	neutral.global_position = Vector2(neutral_dict["X_POS"], neutral_dict["Y_POS"])
 
 	if hurtbox:
 		hurtbox.monitoring = false
