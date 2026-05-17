@@ -48,6 +48,8 @@ var TREE_SCENE = load("res://entities/units/neutral/tree.tscn")
 var CLIENT_TURRET_STATS = load("res://entities/structures/turret/turret_stats.tres")
 
 const ENABLE_DEBUG = true
+const LOG_SLOW_US: int = 5000
+const LOG_INTERVAL: int = 300
 
 var debug_frame_counter : int = 0
 
@@ -133,7 +135,8 @@ func _physics_process(delta : float):
 		var now = Time.get_ticks_msec()
 		while _ghost_queue.size() > 0 and now - _ghost_queue[0]["time"] >= GHOST_DELAY_MSEC:
 			_spawning_ghosts = true
-			_ghost_state_update(_ghost_queue.pop_front()["state"])
+			var entry = _ghost_queue.pop_front()
+			_ghost_state_update(entry["state"], now - entry["time"])
 			_spawning_ghosts = false
 
 
@@ -222,6 +225,7 @@ func _send_game_state() -> void:
 				else:
 					size_by_key[key] = compressed_size
 	
+	state_dict["SENT_AT_MS"] = Time.get_ticks_msec()
 	steam_connection.send_game_state(state_dict)
 
 	if brotatogether_options.is_solo_test:
@@ -351,33 +355,24 @@ func _state_update(state_dict : Dictionary) -> void:
 	var menu_update_time = Time.get_ticks_usec() - before
 	
 	if ENABLE_DEBUG:
-		var end_time : int = Time.get_ticks_usec()
-		var elapsed_time = end_time - start_time
+		var total_us = Time.get_ticks_usec() - start_time
+		var net_ms = Time.get_ticks_msec() - state_dict.get("SENT_AT_MS", Time.get_ticks_msec())
 		debug_frame_counter += 1
-		if debug_frame_counter % 100 == 0 || elapsed_time > 1000:
-			print_debug("state update time: ", elapsed_time)
-			print_debug("Wave Timer: ", wave_timer_update_time,
-				" --- Bonus Gold: ", bonus_gold_update_time,
-				" --- Players: ", player_update_time,
-				" --- Enemies: ", enemies_update_time,
-				" --- Bosses: ", bosses_update_time,
-				" --- Enemy Deaths: ", enemy_deaths_update_time,
-				" --- Flashing Units: ", flashing_units_update_time,
-				" --- Explosions: ", explosion_update_time,
-				" --- Player Projectiles: ", player_projectiles_update_time,
-				" --- Births: ", births_update_time,
-				" --- Items: ", items_update_time,
-				" --- Consumables: ", consumables_update_time,
-				" --- Neutrals: ", neutrals_update_time,
-				" --- Structures: ", structures_update_time,
-				" --- Pets: ", pets_update_time,
-				" --- Enemy Projectiles: ", enemy_projectiles_update_time,
-				" --- Enemy Hit Effects: ", enemy_hit_effects_update_time,
-				" --- Enemy Hit Particles: ", enemy_hit_particles_update_time,
-				" --- Floating text: ", floating_text_update_time,
-				" --- Sound: ", sound_update_time,
-				" --- Sounds 2d: ", sound_2d_update_time,
-				" --- Menus: ", menu_update_time)
+		if debug_frame_counter % LOG_INTERVAL == 0 or total_us > LOG_SLOW_US:
+			print("BTPROF type=client frame=%d net_ms=%d total_us=%d enemies_us=%d bosses_us=%d items_us=%d consumables_us=%d proj_us=%d births_us=%d neutrals_us=%d structures_us=%d pets_us=%d effects_us=%d sounds_us=%d deaths_us=%d players=%d enemies=%d bosses=%d projectiles=%d items=%d consumables=%d neutrals=%d structures=%d pets=%d births=%d" % [
+				debug_frame_counter, net_ms, total_us,
+				enemies_update_time, bosses_update_time,
+				items_update_time, consumables_update_time,
+				player_projectiles_update_time + enemy_projectiles_update_time,
+				births_update_time, neutrals_update_time, structures_update_time, pets_update_time,
+				enemy_hit_effects_update_time + enemy_hit_particles_update_time + floating_text_update_time,
+				sound_update_time + sound_2d_update_time,
+				enemy_deaths_update_time,
+				state_dict["PLAYERS"].size(), state_dict["ENEMIES"].size(), state_dict["BOSSES"].size(),
+				state_dict["PLAYER_PROJECTILES"].size() + state_dict["ENEMY_PROJECTILES"].size(),
+				state_dict["ITEMS"].size(), state_dict["CONSUMABLES"].size(),
+				state_dict["NEUTRALS"].size(), state_dict["STRUCTURES"].size(),
+				state_dict["PETS"].size(), state_dict["BIRTHS"].size()])
 
 
 func _input(event) -> void: 
@@ -554,28 +549,82 @@ func spawn_enemy(enemy_dict) -> void:
 	_entities_container.add_child(enemy)
 
 
-func _ghost_state_update(state_dict: Dictionary) -> void:
+func _ghost_state_update(state_dict: Dictionary, queue_delay_ms: int = 0) -> void:
+	var ghost_start_us: int = Time.get_ticks_usec()
+	var before: int
+
+	before = Time.get_ticks_usec()
 	_update_ghost_players(state_dict["PLAYERS"])
+	var player_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	for enemy_dict in state_dict["ENEMIES"]:
 		_update_enemy(enemy_dict)
+	var enemies_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	for boss_dict in state_dict["BOSSES"]:
 		_update_enemy(boss_dict)
+	var bosses_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	for enemy_id in state_dict["BATCHED_ENEMY_DEATHS"]:
 		if client_enemies.has(enemy_id):
 			if not client_enemies[enemy_id].dead:
 				client_enemies[enemy_id].die()
 			client_enemies.erase(enemy_id)
+	var enemy_deaths_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	_update_enemy_projectiles(state_dict["ENEMY_PROJECTILES"])
 	_update_player_projectiles(state_dict["PLAYER_PROJECTILES"])
+	var proj_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	call_deferred("_update_ghost_births", state_dict["BIRTHS"])
+	var births_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	_update_items(state_dict["ITEMS"])
+	var items_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	_update_consumables(state_dict["CONSUMABLES"])
+	var consumables_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	_update_neutrals(state_dict["NEUTRALS"])
+	var neutrals_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	_update_structures(state_dict["STRUCTURES"])
+	var structures_update_time = Time.get_ticks_usec() - before
+
+	before = Time.get_ticks_usec()
 	_update_pets(state_dict["PETS"])
+	var pets_update_time = Time.get_ticks_usec() - before
+
 	for explosion in state_dict["BATCHED_EXPLOSIONS"]:
 		call_deferred("spawn_explosion", explosion)
+
 	_apply_ghost_modulate()
+
+	if ENABLE_DEBUG:
+		var total_us = Time.get_ticks_usec() - ghost_start_us
+		debug_frame_counter += 1
+		if debug_frame_counter % LOG_INTERVAL == 0 or total_us > LOG_SLOW_US:
+			print("BTPROF type=ghost frame=%d queue_delay_ms=%d total_us=%d enemies_us=%d bosses_us=%d items_us=%d consumables_us=%d proj_us=%d births_us=%d neutrals_us=%d structures_us=%d pets_us=%d deaths_us=%d players=%d enemies=%d bosses=%d projectiles=%d items=%d consumables=%d neutrals=%d structures=%d pets=%d births=%d" % [
+				debug_frame_counter, queue_delay_ms, total_us,
+				enemies_update_time, bosses_update_time,
+				items_update_time, consumables_update_time,
+				proj_update_time, births_update_time,
+				neutrals_update_time, structures_update_time, pets_update_time,
+				enemy_deaths_update_time,
+				state_dict["PLAYERS"].size(), state_dict["ENEMIES"].size(), state_dict["BOSSES"].size(),
+				state_dict["PLAYER_PROJECTILES"].size() + state_dict["ENEMY_PROJECTILES"].size(),
+				state_dict["ITEMS"].size(), state_dict["CONSUMABLES"].size(),
+				state_dict["NEUTRALS"].size(), state_dict["STRUCTURES"].size(),
+				state_dict["PETS"].size(), state_dict["BIRTHS"].size()])
 
 
 func _apply_ghost_modulate() -> void:
@@ -878,6 +927,7 @@ func _spawn_player_projectile(player_projectile_dict : Dictionary) -> void:
  
 	projectile.rotation = player_projectile_dict["ROTATION"]
 
+	projectile.set_meta("pool_id", null)
 	_player_projectiles.add_child(projectile)
 
 	projectile._hitbox.active = false
@@ -1235,6 +1285,7 @@ func _spawn_enemy_projectile(enemy_projectile_dict : Dictionary) -> void:
 
 	enemy_projectile.rotation = enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_ROTATION]
 
+	enemy_projectile.set_meta("pool_id", null)
 	_enemy_projectiles.add_child(enemy_projectile)
 
 	enemy_projectile._hitbox.active = false
@@ -1474,7 +1525,7 @@ func connect_visual_effects(unit: Unit)->void :
 			var _error_floating_text = unit.connect("took_damage", self, "_on_unit_took_damage")
 
 
-func _on_unit_took_damage(unit: Unit, value: int, _knockback_direction: Vector2, is_crit: bool, is_dodge: bool, is_protected: bool, armor_did_something: bool, _args: TakeDamageArgs, _hit_type: int)->void :
+func _on_unit_took_damage(unit: Unit, value: int, _knockback_direction: Vector2, is_crit: bool, is_dodge: bool, is_protected: bool, armor_did_something: bool, _args: TakeDamageArgs, _hit_type: int, _is_one_shot: bool)->void :
 	var color: Color = Color.white
 	var text = str(value)
 
