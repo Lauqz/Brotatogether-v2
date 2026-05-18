@@ -241,7 +241,7 @@ func _state_update(state_dict : Dictionary) -> void:
 	var wait_time = float(state_dict["WAVE_TIME"])
 	if wait_time > 0:
 		_wave_timer.start(wait_time)
-	var wave_timer_update_time = Time.get_ticks_usec() - before
+	var _wave_timer_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
 	var bonus_gold = state_dict["BONUS_GOLD"]
@@ -250,13 +250,13 @@ func _state_update(state_dict : Dictionary) -> void:
 	RunData.bonus_gold = bonus_gold
 	_ui_bonus_gold.update_value(bonus_gold)
 	on_bonus_gold_changed(bonus_gold)
-	var bonus_gold_update_time = Time.get_ticks_usec() - before
+	var _bonus_gold_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
 	var players_array = state_dict["PLAYERS"]
 	for player_index in players_array.size():
 		_update_player_position(players_array[player_index], player_index)
-	var player_update_time = Time.get_ticks_usec() - before
+	var _player_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
 	var enemies_array = state_dict["ENEMIES"]
@@ -289,12 +289,12 @@ func _state_update(state_dict : Dictionary) -> void:
 			flashing_unit = client_neutrals[flashing_unit_id]
 		if flashing_unit and is_instance_valid(flashing_unit):
 			flashing_unit.flash()
-	var flashing_units_update_time = Time.get_ticks_usec() - before
+	var _flashing_units_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
 	for explosion in state_dict["BATCHED_EXPLOSIONS"]:
 		call_deferred("spawn_explosion", explosion)
-	var explosion_update_time = Time.get_ticks_usec() - before
+	var _explosion_update_time = Time.get_ticks_usec() - before
 	
 	before = Time.get_ticks_usec()
 	_update_player_projectiles(state_dict["PLAYER_PROJECTILES"])
@@ -352,7 +352,7 @@ func _state_update(state_dict : Dictionary) -> void:
 	
 	before = Time.get_ticks_usec()
 	_update_menu(state_dict["UPGRADE_MENU_STATUS"])
-	var menu_update_time = Time.get_ticks_usec() - before
+	var _menu_update_time = Time.get_ticks_usec() - before
 	
 	if ENABLE_DEBUG:
 		var total_us = Time.get_ticks_usec() - start_time
@@ -555,7 +555,7 @@ func _ghost_state_update(state_dict: Dictionary, queue_delay_ms: int = 0) -> voi
 
 	before = Time.get_ticks_usec()
 	_update_ghost_players(state_dict["PLAYERS"])
-	var player_update_time = Time.get_ticks_usec() - before
+	var _player_update_time = Time.get_ticks_usec() - before
 
 	before = Time.get_ticks_usec()
 	for enemy_dict in state_dict["ENEMIES"]:
@@ -927,7 +927,7 @@ func _spawn_player_projectile(player_projectile_dict : Dictionary) -> void:
  
 	projectile.rotation = player_projectile_dict["ROTATION"]
 
-	projectile.set_meta("pool_id", null)
+	projectile.set_meta("pool_id", Keys.generate_hash(player_projectile_dict["FILENAME"]))
 	_player_projectiles.add_child(projectile)
 
 	projectile._hitbox.active = false
@@ -1285,11 +1285,11 @@ func _spawn_enemy_projectile(enemy_projectile_dict : Dictionary) -> void:
 
 	enemy_projectile.rotation = enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_ROTATION]
 
-	enemy_projectile.set_meta("pool_id", null)
+	enemy_projectile.set_meta("pool_id", Keys.generate_hash(enemy_projectile_dict[ProjectileState.PROJECTILE_STATE_FILENAME]))
 	_enemy_projectiles.add_child(enemy_projectile)
 
 	enemy_projectile._hitbox.active = false
-	_enemy_projectiles.set_physics_process(false)
+	enemy_projectile.set_physics_process(false)
 	_enemy_projectiles.show()
 
 
