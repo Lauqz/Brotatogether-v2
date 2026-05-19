@@ -50,8 +50,12 @@ var CLIENT_TURRET_STATS = load("res://entities/structures/turret/turret_stats.tr
 const ENABLE_DEBUG = true
 const LOG_SLOW_US: int = 5000
 const LOG_INTERVAL: int = 300
+const LOG_FRAME_SLOW_US: int = 25000
+const LOG_WAVE_END_WINDOW: float = 15.0
+const LOG_WAVE_END_INTERVAL: int = 30
 
 var debug_frame_counter : int = 0
+var _frame_log_counter: int = 0
 
 # This is currently a half-completed attempt ot shrink some of the overhead
 # in messaging.  With a bit of testing, the gains weren't that great given 
@@ -142,6 +146,13 @@ func _physics_process(delta : float):
 
 func _process(_delta):
 	if in_multiplayer_game:
+		if ENABLE_DEBUG:
+			var frame_us = int(_delta * 1_000_000)
+			var wave_time_left = _wave_timer.time_left if is_instance_valid(_wave_timer) else -1.0
+			var near_wave_end = wave_time_left >= 0.0 and wave_time_left < LOG_WAVE_END_WINDOW
+			_frame_log_counter += 1
+			if frame_us > LOG_FRAME_SLOW_US or (near_wave_end and _frame_log_counter % LOG_WAVE_END_INTERVAL == 0):
+				print("BTPROF type=frame frame_us=%d wave_time=%.1f" % [frame_us, wave_time_left])
 		if waiting_to_start_round:
 			if steam_connection.is_host():
 				var all_players_entered = true
@@ -275,9 +286,11 @@ func _state_update(state_dict : Dictionary) -> void:
 		if client_enemies.has(enemy_id):
 			if not client_enemies[enemy_id].dead:
 				client_enemies[enemy_id].die()
+			else:
+				push_warning("BT: ghost enemy %s already dead at death batch time" % str(enemy_id))
 			client_enemies.erase(enemy_id)
 	var enemy_deaths_update_time = Time.get_ticks_usec() - before
-	
+
 	before = Time.get_ticks_usec()
 	for flashing_unit_id in state_dict["BATCHED_UNIT_FLASHES"]:
 		var flashing_unit
@@ -547,6 +560,7 @@ func spawn_enemy(enemy_dict) -> void:
 					shape.disabled = true
 
 	_entities_container.add_child(enemy)
+	enemy.set_meta("btg_ghost_enemy", true)
 
 
 func _ghost_state_update(state_dict: Dictionary, queue_delay_ms: int = 0) -> void:
@@ -572,6 +586,8 @@ func _ghost_state_update(state_dict: Dictionary, queue_delay_ms: int = 0) -> voi
 		if client_enemies.has(enemy_id):
 			if not client_enemies[enemy_id].dead:
 				client_enemies[enemy_id].die()
+			else:
+				push_warning("BT: ghost enemy %s already dead at death batch time" % str(enemy_id))
 			client_enemies.erase(enemy_id)
 	var enemy_deaths_update_time = Time.get_ticks_usec() - before
 
@@ -607,19 +623,23 @@ func _ghost_state_update(state_dict: Dictionary, queue_delay_ms: int = 0) -> voi
 	for explosion in state_dict["BATCHED_EXPLOSIONS"]:
 		call_deferred("spawn_explosion", explosion)
 
+	before = Time.get_ticks_usec()
 	_apply_ghost_modulate()
+	var modulate_us = Time.get_ticks_usec() - before
 
 	if ENABLE_DEBUG:
 		var total_us = Time.get_ticks_usec() - ghost_start_us
 		debug_frame_counter += 1
-		if debug_frame_counter % LOG_INTERVAL == 0 or total_us > LOG_SLOW_US:
-			print("BTPROF type=ghost frame=%d queue_delay_ms=%d total_us=%d enemies_us=%d bosses_us=%d items_us=%d consumables_us=%d proj_us=%d births_us=%d neutrals_us=%d structures_us=%d pets_us=%d deaths_us=%d players=%d enemies=%d bosses=%d projectiles=%d items=%d consumables=%d neutrals=%d structures=%d pets=%d births=%d" % [
-				debug_frame_counter, queue_delay_ms, total_us,
+		var wave_time_left = _wave_timer.time_left if is_instance_valid(_wave_timer) else -1.0
+		var near_wave_end = wave_time_left >= 0.0 and wave_time_left < LOG_WAVE_END_WINDOW
+		if debug_frame_counter % LOG_INTERVAL == 0 or total_us > LOG_SLOW_US or near_wave_end:
+			print("BTPROF type=ghost frame=%d queue_delay_ms=%d total_us=%d modulate_us=%d enemies_us=%d bosses_us=%d items_us=%d consumables_us=%d proj_us=%d births_us=%d neutrals_us=%d structures_us=%d pets_us=%d deaths_us=%d wave_time=%.1f players=%d enemies=%d bosses=%d projectiles=%d items=%d consumables=%d neutrals=%d structures=%d pets=%d births=%d" % [
+				debug_frame_counter, queue_delay_ms, total_us, modulate_us,
 				enemies_update_time, bosses_update_time,
 				items_update_time, consumables_update_time,
 				proj_update_time, births_update_time,
 				neutrals_update_time, structures_update_time, pets_update_time,
-				enemy_deaths_update_time,
+				enemy_deaths_update_time, wave_time_left,
 				state_dict["PLAYERS"].size(), state_dict["ENEMIES"].size(), state_dict["BOSSES"].size(),
 				state_dict["PLAYER_PROJECTILES"].size() + state_dict["ENEMY_PROJECTILES"].size(),
 				state_dict["ITEMS"].size(), state_dict["CONSUMABLES"].size(),
@@ -900,8 +920,9 @@ func _update_player_projectiles(player_projectiles_array : Array) -> void:
 	
 	for network_id in client_player_projectiles:
 		if not current_projectiles.has(network_id):
-			if is_instance_valid(client_player_projectiles[network_id]):
-				client_player_projectiles[network_id].queue_free()
+			var proj = client_player_projectiles[network_id]
+			if is_instance_valid(proj) and proj.get_parent() != null:
+				proj.queue_free()
 			client_player_projectiles.erase(network_id)
 
 
@@ -1267,8 +1288,9 @@ func _update_enemy_projectiles(enemy_projectiles_array : Array) -> void:
 	
 	for network_id in client_enemy_projectiles:
 		if not current_enemy_projectiles.has(network_id):
-			if is_instance_valid(client_enemy_projectiles[network_id]):
-				client_enemy_projectiles[network_id].queue_free()
+			var proj = client_enemy_projectiles[network_id]
+			if is_instance_valid(proj) and proj.get_parent() != null:
+				proj.queue_free()
 			client_enemy_projectiles.erase(network_id)
 
 
@@ -1568,6 +1590,11 @@ func spawn_explosion(explosion_dict : Dictionary) -> void:
 
 
 func add_node_to_pool(node: Node, id) -> void:
+	if node.has_meta("btg_ghost_enemy"):
+		if node.get_parent() != null:
+			node.get_parent().remove_child(node)
+		node.queue_free()
+		return
 	# id may be null for client-spawned projectiles that have no pool_id meta
 	if id != null and _pool.has(id):
 		.add_node_to_pool(node, id)

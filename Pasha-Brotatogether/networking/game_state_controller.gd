@@ -251,6 +251,7 @@ func spawn_enemy_projectile(position:Vector2, global_position:Vector2, rotation:
 	var projectiles_container = $"/root/ClientMain/Projectiles"
 	var projectile = load(filename).instance()
 	projectile.set_meta("pool_id", Keys.generate_hash(filename))
+	projectile._hitbox.active = false
 
 	projectile.position = position
 	projectile.global_position = global_position

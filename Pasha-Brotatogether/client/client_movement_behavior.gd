@@ -1,7 +1,9 @@
 extends MovementBehavior
 
+signal detected_player
+
 func init(parent:Node)->Node:
-	var _init = .init(parent) 
+	var _init = .init(parent)
 	return self
 
 
