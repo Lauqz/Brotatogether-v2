@@ -42,10 +42,10 @@ func _ready():
 	create_lobby_button.grab_focus()
 	CoopService.clear_coop_players()
 
-	var solo_test_btn = Button.new()
-	solo_test_btn.text = "Solo Test"
-	create_lobby_button.get_parent().add_child(solo_test_btn)
-	solo_test_btn.connect("pressed", self, "_on_solo_test_button_pressed")
+	# var solo_test_btn = Button.new()
+	# solo_test_btn.text = "Solo Test"
+	# create_lobby_button.get_parent().add_child(solo_test_btn)
+	# solo_test_btn.connect("pressed", self, "_on_solo_test_button_pressed")
 
 
 func _input(event:InputEvent)->void :

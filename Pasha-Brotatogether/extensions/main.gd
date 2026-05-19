@@ -47,7 +47,7 @@ var ENTITY_BIRTH_SCENE = load("res://entities/birth/entity_birth.tscn")
 var TREE_SCENE = load("res://entities/units/neutral/tree.tscn")
 var CLIENT_TURRET_STATS = load("res://entities/structures/turret/turret_stats.tres")
 
-const ENABLE_DEBUG = true
+const ENABLE_DEBUG = false
 const LOG_SLOW_US: int = 5000
 const LOG_INTERVAL: int = 300
 const LOG_FRAME_SLOW_US: int = 25000
@@ -56,6 +56,7 @@ const LOG_WAVE_END_INTERVAL: int = 30
 
 var debug_frame_counter : int = 0
 var _frame_log_counter: int = 0
+var _physics_step_count: int = 0
 
 # This is currently a half-completed attempt ot shrink some of the overhead
 # in messaging.  With a bit of testing, the gains weren't that great given 
@@ -126,14 +127,25 @@ func _ready():
 func _physics_process(delta : float):
 	if not in_multiplayer_game:
 		return
-	
+
 	send_timer -= delta
 	if send_timer <= 0.0:
 		send_timer = SEND_RATE
 		if steam_connection.is_host():
-			_send_game_state()
+			if ENABLE_DEBUG:
+				var send_before_us = Time.get_ticks_usec()
+				_send_game_state()
+				var send_us = Time.get_ticks_usec() - send_before_us
+				if send_us > LOG_SLOW_US:
+					var enemy_count = _entity_spawner.enemies.size() if is_instance_valid(_entity_spawner) else -1
+					print("BTPROF type=send send_us=%d enemies=%d" % [send_us, enemy_count])
+			else:
+				_send_game_state()
 		else:
 			_send_client_position()
+
+	if ENABLE_DEBUG:
+		_physics_step_count += 1
 
 	if brotatogether_options.is_solo_test:
 		var now = Time.get_ticks_msec()
@@ -152,7 +164,8 @@ func _process(_delta):
 			var near_wave_end = wave_time_left >= 0.0 and wave_time_left < LOG_WAVE_END_WINDOW
 			_frame_log_counter += 1
 			if frame_us > LOG_FRAME_SLOW_US or (near_wave_end and _frame_log_counter % LOG_WAVE_END_INTERVAL == 0):
-				print("BTPROF type=frame frame_us=%d wave_time=%.1f" % [frame_us, wave_time_left])
+				print("BTPROF type=frame frame_us=%d wave_time=%.1f physics_steps=%d" % [frame_us, wave_time_left, _physics_step_count])
+			_physics_step_count = 0
 		if waiting_to_start_round:
 			if steam_connection.is_host():
 				var all_players_entered = true
@@ -246,8 +259,7 @@ func _send_game_state() -> void:
 func _state_update(state_dict : Dictionary) -> void:	
 	var start_time : int = Time.get_ticks_usec()
 	var before : int
-#	print_debug("received state ", state_dict)
-	
+
 	before = Time.get_ticks_usec()
 	var wait_time = float(state_dict["WAVE_TIME"])
 	if wait_time > 0:
@@ -1374,7 +1386,6 @@ func _host_menu_status() -> Dictionary:
 			player_menus.push_back(player_menu_dict)
 		menu_dict["PLAYER_MENUS"] = player_menus
 	
-#	print_debug("Menu DICT: ", menu_dict)
 	return menu_dict
 
 
