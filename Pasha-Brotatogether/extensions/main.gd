@@ -277,7 +277,8 @@ func _state_update(state_dict : Dictionary) -> void:
 	
 	before = Time.get_ticks_usec()
 	var players_array = state_dict["PLAYERS"]
-	for player_index in players_array.size():
+	var player_update_count = min(players_array.size(), RunData.get_player_count())
+	for player_index in player_update_count:
 		_update_player_position(players_array[player_index], player_index)
 	var _player_update_time = Time.get_ticks_usec() - before
 	
@@ -1400,7 +1401,8 @@ func _update_menu(menu_dict : Dictionary) -> void:
 		return
 	
 	var player_menus = menu_dict["PLAYER_MENUS"]
-	for player_index in RunData.get_player_count():
+	var menu_count = min(RunData.get_player_count(), player_menus.size())
+	for player_index in menu_count:
 		var player_container = _coop_upgrades_ui._get_player_container(player_index)
 		var player_menu_dict = player_menus[player_index]
 		
@@ -1520,23 +1522,48 @@ func _focus_for_string(player_container : CoopUpgradesUIPlayerContainer, focus_k
 
 
 func _client_reroll_button_pressed(player_index : int) -> void:
+	if player_index < 0 or player_index >= RunData.get_player_count():
+		return
 	var player_container = _coop_upgrades_ui._get_player_container(player_index)
 	player_container._on_RerollButton_pressed()
 
 
 func _client_choose_upgrade_button_pressed(upgrade_dict : Dictionary, player_index : int) -> void:
+	if player_index < 0 or player_index >= RunData.get_player_count():
+		return
+	if not upgrade_dict.has("UPGRADE_ID"):
+		return
+	
 	var player_container = _coop_upgrades_ui._get_player_container(player_index)
+	var requested_id = upgrade_dict["UPGRADE_ID"]
+	
+	# Prefer the exact option this player was actually offered.  Those instances
+	# carry the correct tier; re-resolving purely from ItemService discards the
+	# tier and applies a default version of the upgrade, which is what made
+	# client upgrade picks look like the game was choosing at random.
+	for offered_upgrade in player_container._old_upgrades:
+		if offered_upgrade.my_id == requested_id:
+			player_container._on_choose_button_pressed(offered_upgrade.duplicate())
+			return
+	
+	# Fallback: resolve from the global upgrade list if the offered options are
+	# somehow unavailable on the host.
 	for upgrade_candidate in ItemService.upgrades:
-		if upgrade_candidate.my_id == upgrade_dict["UPGRADE_ID"]:
+		if upgrade_candidate.my_id == requested_id:
 			player_container._on_choose_button_pressed(upgrade_candidate.duplicate())
+			return
 
 
 func _client_take_button_pressed(player_index : int) -> void:
+	if player_index < 0 or player_index >= RunData.get_player_count():
+		return
 	var player_container = _coop_upgrades_ui._get_player_container(player_index)
 	player_container._on_TakeButton_pressed()
 
 
 func _client_discard_button_pressed(player_index : int) -> void:
+	if player_index < 0 or player_index >= RunData.get_player_count():
+		return
 	var player_container = _coop_upgrades_ui._get_player_container(player_index)
 	player_container._on_DiscardButton_pressed()
 
