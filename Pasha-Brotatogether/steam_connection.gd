@@ -319,6 +319,15 @@ func _on_lobby_created(connect: int, created_lobby_id: int) -> void:
 			print("Lobby created for game: ", created_lobby_id)
 			game_lobby_id = created_lobby_id
 			game_lobby_owner_id = Steam.getLobbyOwner(game_lobby_id) # This should be me but query to make sure
+			
+			# Make sure the host is represented in its own member list.  Steam
+			# does not always deliver a "member entered" event for the lobby
+			# creator, and without this the host would have no index for itself.
+			if not lobby_members.has(steam_id):
+				lobby_members.push_back(steam_id)
+				lobby_member_names.push_back(Steam.getFriendPersonaName(steam_id))
+			_sort_lobby_members()
+			
 			var _err = Steam.setLobbyData(created_lobby_id, "lobby_type", GAME_LOBBY_TYPE)
 			_err = Steam.setLobbyData(created_lobby_id,"lobby_name", Steam.getFriendPersonaName(Steam.getSteamID()))
 			_err = Steam.setLobbyData(created_lobby_id,"lobby_status", "OPEN")
@@ -358,6 +367,9 @@ func _on_lobby_joined(lobby_id: int, _permissions: int, _locked: bool, response:
 						lobby_members.push_back(member_id)
 						lobby_member_names.push_back(Steam.getFriendPersonaName(member_id))
 					
+					# Canonicalise ordering so this peer agrees with everyone else.
+					_sort_lobby_members()
+					
 					print("Changing to Character Selection Screen...")
 					var _error = get_tree().change_scene(MenuData.character_selection_scene)
 					print("change scene error : ", _error)
@@ -375,6 +387,8 @@ func _on_lobby_chat_update(lobby_id: int, change_id: int, _making_change_id: int
 			if not lobby_members.has(change_id):
 				lobby_members.push_back(change_id)
 				lobby_member_names.push_back(changer_name)
+				# Keep the canonical (sorted) ordering every peer shares.
+				_sort_lobby_members()
 				emit_signal("lobby_players_updated")
 			print("%s has joined the lobby." % changer_name)
 
@@ -884,6 +898,44 @@ func get_lobby_index_for_player(player_id : int) -> int:
 			return index
 	
 	return -1
+
+
+# The player index is derived from the position of a steam id inside
+# lobby_members.  For the game to stay in sync EVERY peer (host and all
+# clients) must agree on the exact same ordering, otherwise a client's input
+# gets applied to the wrong player on the host and selection arrays line up
+# against the wrong slots (this is what breaks things once a third player is
+# present).
+#
+# Steam does NOT guarantee that getLobbyMemberByIndex returns the same order on
+# every machine, and the host builds its list incrementally from join events.
+# Sorting by steam id (a stable 64-bit number) gives a single canonical order
+# that every peer computes identically, regardless of join order or Steam's
+# enumeration order.  It also de-dupes defensively.
+func _sort_lobby_members() -> void:
+	var seen := {}
+	var paired := []
+	for i in lobby_members.size():
+		var member_id = lobby_members[i]
+		if seen.has(member_id):
+			continue
+		seen[member_id] = true
+		var member_name := ""
+		if i < lobby_member_names.size():
+			member_name = lobby_member_names[i]
+		paired.push_back([member_id, member_name])
+	
+	paired.sort_custom(self, "_sort_member_pair")
+	
+	lobby_members.clear()
+	lobby_member_names.clear()
+	for pair in paired:
+		lobby_members.push_back(pair[0])
+		lobby_member_names.push_back(pair[1])
+
+
+func _sort_member_pair(a, b) -> bool:
+	return a[0] < b[0]
 
 
 func request_shop_update(changed_shop_player_indeces : Array = []) -> void:
